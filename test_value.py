@@ -1,6 +1,8 @@
 import math
 import unittest
 
+import numpy as np
+
 from value import Value
 
 
@@ -75,6 +77,44 @@ class ValueBackpropTests(unittest.TestCase):
         self.assertEqual(out.grad, 0.0)
         self.assertEqual(a.grad, 0.0)
         self.assertEqual(b.grad, 0.0)
+
+
+class ValueVectorTests(unittest.TestCase):
+    def test_vector_add(self):
+        a = Value(np.array([1.0, 2.0]))
+        b = Value(np.array([3.0, 4.0]))
+        out = a + b
+        out.backward()
+        expected = np.array([4.0, 6.0])
+        np.testing.assert_array_almost_equal(out.data, expected)
+        np.testing.assert_array_almost_equal(a.grad, np.ones_like(a.data))
+        np.testing.assert_array_almost_equal(b.grad, np.ones_like(b.data))
+
+    def test_dot_product(self):
+        a = Value(np.array([1.0, 2.0]))
+        b = Value(np.array([3.0, 4.0]))
+        out = a.dot(b)
+        out.backward()
+        expected = 1*3 + 2*4  # 11.0
+        self.assertAlmostEqual(out.data, expected)
+        np.testing.assert_array_almost_equal(a.grad, b.data)
+        np.testing.assert_array_almost_equal(b.grad, a.data)
+
+    def test_sum(self):
+        a = Value(np.array([1.0, 2.0, 3.0]))
+        out = a.sum()
+        out.backward()
+        expected = 6.0
+        self.assertAlmostEqual(out.data, expected)
+        np.testing.assert_array_almost_equal(a.grad, np.ones_like(a.data))
+
+    def test_reshape(self):
+        a = Value(np.array([1.0, 2.0, 3.0, 4.0]))
+        out = a.reshape((2, 2))
+        out.backward()
+        expected = np.array([[1.0, 2.0], [3.0, 4.0]])
+        np.testing.assert_array_almost_equal(out.data, expected)
+        np.testing.assert_array_almost_equal(a.grad, np.ones_like(a.data))
 
 
 if __name__ == "__main__":
