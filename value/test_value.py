@@ -116,6 +116,34 @@ class ValueVectorTests(unittest.TestCase):
         np.testing.assert_array_almost_equal(out.data, expected)
         np.testing.assert_array_almost_equal(a.grad, np.ones_like(a.data))
 
+    def test_relu(self):
+        a = Value(np.array([-1.0, 0.5, 2.0]))
+        out = a.relu()
+        out.backward()
+        expected = np.array([0.0, 0.5, 2.0])
+        np.testing.assert_array_almost_equal(out.data, expected)
+        expected_grad = np.array([0.0, 1.0, 1.0])  # relu导数
+        np.testing.assert_array_almost_equal(a.grad, expected_grad)
+
+    def test_sigmoid(self):
+        a = Value(0.0)
+        out = a.sigmoid()
+        out.backward()
+        expected = 0.5
+        self.assertAlmostEqual(out.data, expected)
+        expected_grad = 0.25  # sigmoid导数在0处
+        self.assertAlmostEqual(a.grad, expected_grad)
+
+    def test_sin_cos(self):
+        a = Value(np.pi / 2)
+        sin_out = a.sin()
+        cos_out = a.cos()
+        sin_out.backward()
+        cos_out.backward()
+        self.assertAlmostEqual(sin_out.data, 1.0)
+        self.assertAlmostEqual(cos_out.data, 0.0)
+        self.assertAlmostEqual(a.grad, 0.0 - 1.0)  # cos导数 + sin导数
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -159,10 +159,50 @@ class Value:
         def _backward():
             self.grad += np.reshape(out.grad, self.data.shape)
 
+    def relu(self) -> "Value":
+        out = Value(np.maximum(0, self.data))
+        out._children.add(self)
+        out.op = "relu"
+
+        def _backward():
+            self.grad += np.where(out.data > 0, out.grad, 0)
+
         out._backward = _backward
         return out
 
-    def _topological_order(self) -> list["Value"]:
+    def sigmoid(self) -> "Value":
+        s = 1 / (1 + np.exp(-self.data))
+        out = Value(s)
+        out._children.add(self)
+        out.op = "sigmoid"
+
+        def _backward():
+            self.grad += s * (1 - s) * out.grad
+
+        out._backward = _backward
+        return out
+
+    def sin(self) -> "Value":
+        out = Value(np.sin(self.data))
+        out._children.add(self)
+        out.op = "sin"
+
+        def _backward():
+            self.grad += np.cos(self.data) * out.grad
+
+        out._backward = _backward
+        return out
+
+    def cos(self) -> "Value":
+        out = Value(np.cos(self.data))
+        out._children.add(self)
+        out.op = "cos"
+
+        def _backward():
+            self.grad -= np.sin(self.data) * out.grad
+
+        out._backward = _backward
+        return out
         topo: list[Value] = []
         visited: Set[Value] = set()
 
@@ -187,7 +227,18 @@ class Value:
             node._backward()
 
     def __repr__(self) -> str:
-        return f"Value(data={self.data}, grad={self.grad}, op={self.op})"
+        data_str = np.array_repr(self.data, precision=3, suppress_small=True)
+        grad_str = np.array_repr(self.grad, precision=3, suppress_small=True)
+        return f"Value(data={data_str}, grad={grad_str}, op={self.op})"
 
-    def __hash__(self) -> int:
-        return id(self)
+    @property
+    def shape(self):
+        return self.data.shape
+
+    def to_numpy(self):
+        return self.data.copy()
+
+    def print_graph(self, indent=0):
+        print("  " * indent + str(self))
+        for child in self._children:
+            child.print_graph(indent + 1)
