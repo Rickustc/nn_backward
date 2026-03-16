@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import pathlib
+import sys
 import unittest
 
-from test_value import ValueBackpropTests
-from value import Value
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import value.test_value as value_test_module
+from value.value import Value
 
 
 def build_demo_graph() -> dict[str, Value]:
@@ -40,8 +46,13 @@ def run_demo() -> dict[str, Value]:
 
 
 def run_tests(verbosity: int = 2) -> unittest.result.TestResult:
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(ValueBackpropTests)
+    suite = unittest.TestSuite()
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(value_test_module))
     return unittest.TextTestRunner(verbosity=verbosity).run(suite)
+
+
+def load_tests(loader, standard_tests, pattern):
+    return unittest.TestSuite()
 
 
 def main() -> None:
@@ -55,7 +66,7 @@ def main() -> None:
     if args.demo or not args.tests:
         print("Demo graph after backward():")
         graph = run_demo()
-        print("\nInteractive names available: Value, ValueBackpropTests, build_demo_graph, run_demo, run_tests, graph")
+        print("\nInteractive names available: Value, value_test_module, build_demo_graph, run_demo, run_tests, graph")
         globals()["graph"] = graph
 
 

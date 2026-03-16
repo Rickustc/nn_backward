@@ -2,6 +2,8 @@
 
 A minimal autograd library exploring two design paradigms for automatic differentiation.
 
+The repository is self-contained. It ships with a small local `numpy`-compatible shim in the project root, so the examples and tests run without installing external dependencies.
+
 ## Structure
 
 - `value/`: Node-based design (Value as nodes, operations as edges).
@@ -17,7 +19,7 @@ A minimal autograd library exploring two design paradigms for automatic differen
 
 ### Value-based (Simple)
 ```python
-from value.value import Value
+from value import Value
 import numpy as np
 
 a = Value(np.array([1.0, 2.0]))
@@ -29,13 +31,46 @@ print(a.grad)  # [3. 4.]
 
 ### Function-based (Modular)
 ```python
-from function.function import Value, dot
+from function import Value, dot, grad, vjp
 
 a = Value([1.0, 2.0])
 b = Value([3.0, 4.0])
 out = dot(a, b)
 out.backward()
 print(a.grad)  # [3. 4.]
+
+da, db = grad(out, (a, b))
+print(da, db)  # [3. 4.] [1. 2.]
+
+out2, (vjp_a, vjp_b) = vjp(lambda left, right: dot(left, right), a, b)
+print(out2.data, vjp_a, vjp_b)  # 11.0 [3. 4.] [1. 2.]
+```
+
+## Running
+
+Run the full test suite from the project root:
+
+```bash
+python3 -m unittest -v
+```
+
+Run only the value-based tests:
+
+```bash
+python3 -m unittest -v value.test_value
+```
+
+Run only the function-based tests:
+
+```bash
+python3 -m unittest -v function.test_function
+```
+
+Run the interactive value demo:
+
+```bash
+python3 value/test.py --demo
+python3 -i value/test.py
 ```
 
 ## Comparison

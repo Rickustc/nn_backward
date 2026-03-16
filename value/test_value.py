@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from value import Value
+from value.value import Value
 
 
 class ValueBackpropTests(unittest.TestCase):
@@ -115,6 +115,17 @@ class ValueVectorTests(unittest.TestCase):
         expected = np.array([[1.0, 2.0], [3.0, 4.0]])
         np.testing.assert_array_almost_equal(out.data, expected)
         np.testing.assert_array_almost_equal(a.grad, np.ones_like(a.data))
+
+    def test_matmul(self):
+        a = Value(np.array([[1.0, 2.0], [3.0, 4.0]]))
+        b = Value(np.array([[5.0, 6.0], [7.0, 8.0]]))
+        out = a.matmul(b)
+        out.backward()
+
+        expected = np.array([[19.0, 22.0], [43.0, 50.0]])
+        np.testing.assert_array_almost_equal(out.data, expected)
+        np.testing.assert_array_almost_equal(a.grad, np.array([[11.0, 15.0], [11.0, 15.0]]))
+        np.testing.assert_array_almost_equal(b.grad, np.array([[4.0, 4.0], [6.0, 6.0]]))
 
     def test_relu(self):
         a = Value(np.array([-1.0, 0.5, 2.0]))

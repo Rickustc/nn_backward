@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-"""Minimal autograd ``Value`` node for scalars with backprop support."""
+"""Minimal autograd ``Value`` node with scalar/vector support."""
 
-import math
 from typing import Callable, Set
 
 import numpy as np
@@ -44,7 +43,7 @@ class Value:
         out._backward = _backward
         return out
 
-    def __rsub__(self, other: "Value | float") -> "Value":
+    def __rsub__(self, other) -> "Value":
         other = other if isinstance(other, Value) else Value(other)
         return other - self
 
@@ -71,12 +70,13 @@ class Value:
 
         def _backward():
             self.grad += np.divide(out.grad, other.data)
-            other.grad -= np.multiply(np.divide(self.data, np.multiply(other.data, other.data)), out.grad)
+            denom = np.multiply(other.data, other.data)
+            other.grad -= np.multiply(np.divide(self.data, denom), out.grad)
 
         out._backward = _backward
         return out
 
-    def __rtruediv__(self, other: "Value | float") -> "Value":
+    def __rtruediv__(self, other) -> "Value":
         other = other if isinstance(other, Value) else Value(other)
         return other / self
 
@@ -103,13 +103,13 @@ class Value:
         return out
 
     def tanh(self) -> "Value":
-        t = np.tanh(self.data)
-        out = Value(t)
+        tanh_out = np.tanh(self.data)
+        out = Value(tanh_out)
         out._children.add(self)
         out.op = "tanh"
 
         def _backward():
-            self.grad += np.multiply(1 - np.multiply(t, t), out.grad)
+            self.grad += np.multiply(1 - np.multiply(tanh_out, tanh_out), out.grad)
 
         out._backward = _backward
         return out
@@ -159,6 +159,9 @@ class Value:
         def _backward():
             self.grad += np.reshape(out.grad, self.data.shape)
 
+        out._backward = _backward
+        return out
+
     def relu(self) -> "Value":
         out = Value(np.maximum(0, self.data))
         out._children.add(self)
@@ -171,13 +174,13 @@ class Value:
         return out
 
     def sigmoid(self) -> "Value":
-        s = 1 / (1 + np.exp(-self.data))
-        out = Value(s)
+        sigmoid_out = 1 / (1 + np.exp(-self.data))
+        out = Value(sigmoid_out)
         out._children.add(self)
         out.op = "sigmoid"
 
         def _backward():
-            self.grad += s * (1 - s) * out.grad
+            self.grad += sigmoid_out * (1 - sigmoid_out) * out.grad
 
         out._backward = _backward
         return out
@@ -203,15 +206,17 @@ class Value:
 
         out._backward = _backward
         return out
+
+    def _topological_order(self) -> list["Value"]:
         topo: list[Value] = []
         visited: Set[Value] = set()
 
-        def build(v: Value) -> None:
-            if v not in visited:
-                visited.add(v)
-                for parent in v._children:
+        def build(node: Value) -> None:
+            if node not in visited:
+                visited.add(node)
+                for parent in node._children:
                     build(parent)
-                topo.append(v)
+                topo.append(node)
 
         build(self)
         return topo
@@ -236,7 +241,7 @@ class Value:
         return self.data.shape
 
     def to_numpy(self):
-        return self.data.copy()
+        return self.data.copy() if hasattr(self.data, "copy") else self.data
 
     def print_graph(self, indent=0):
         print("  " * indent + str(self))
