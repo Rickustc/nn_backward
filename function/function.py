@@ -1,181 +1,55 @@
 from __future__ import annotations
-
-"""Function-based autograd: operators as edges, tensors as nodes."""
-
-from typing import Iterable, List
-
 import numpy as np
 
 
-def _shape_of(data):
-    return getattr(data, "shape", ())
+def as_value(x, requires_grad=False):
+    if isinstance(x, Value):
+        return x
+    return Value(x, requires_grad=requires_grad)
 
 
-def _is_scalar_data(data) -> bool:
-    return _shape_of(data) == ()
-
-
-def _ensure_array(data):
-    return np.asarray(data)
-
-
-def _data_of(value):
-    return value.data if isinstance(value, Value) else value
-
-
-def _ensure_value(value, requires_grad: bool = False) -> "Value":
-    if isinstance(value, Value):
-        return value
-    return Value(value, requires_grad=requires_grad)
-
-
-def _format_repr(value) -> str:
-    if isinstance(value, Value):
-        return f"Value(data={_format_repr(value.data)}, grad={_format_repr(value.grad)})"
-    return np.array_repr(value, precision=3, suppress_small=True)
-
-
-def _as_value_sequence(values, name: str) -> tuple["Value", ...]:
-    if isinstance(values, Value):
-        return (values,)
-    if isinstance(values, (list, tuple)) and all(isinstance(item, Value) for item in values):
-        return tuple(values)
-    raise TypeError(f"{name} must be a Value or a sequence of Value objects")
-
-
-def _topological_sort(outputs: Iterable["Value"]) -> list["Value"]:
-    topo: list[Value] = []
-    visited: set[Value] = set()
-
-    def build(node: Value) -> None:
-        if node in visited:
-            return
-        visited.add(node)
-        if node.creator is not None:
-            for parent in node.creator.inputs:
-                build(parent)
-        topo.append(node)
-
-    for output in outputs:
-        build(output)
-    return topo
-
-
-def _accumulate_grad(current, new):
-    if new is None:
-        return current
-    if current is None:
-        return new
-    if isinstance(current, Value) or isinstance(new, Value):
-        return add(_ensure_value(current, requires_grad=False), _ensure_value(new, requires_grad=False))
-    return np.add(current, new)
-
-
-def _transpose_data(data):
-    shape = _shape_of(data)
-    if len(shape) != 2:
-        raise ValueError("transpose only supports 2D tensors")
-    return data.T
-
-
-def _normalize_grad_outputs(outputs: tuple["Value", ...], grad_outputs):
-    if grad_outputs is None:
-        provided = (None,) * len(outputs)
-    elif len(outputs) == 1:
-        provided = (grad_outputs,)
-    else:
-        if not isinstance(grad_outputs, (list, tuple)):
-            raise TypeError("grad_outputs must match outputs")
-        if len(grad_outputs) != len(outputs):
-            raise ValueError("grad_outputs must have the same length as outputs")
-        provided = tuple(grad_outputs)
-
-    normalized = []
-    for output, grad_output in zip(outputs, provided):
-        if grad_output is None:
-            if not _is_scalar_data(output.data):
-                raise ValueError("grad_outputs is required for non-scalar outputs")
-            normalized.append(np.ones_like(output.data))
-        elif isinstance(grad_output, Value):
-            normalized.append(grad_output)
-        else:
-            normalized.append(_ensure_array(grad_output))
-    return tuple(normalized)
-
-
-def _run_backward(outputs, grad_outputs, create_graph: bool, accumulate_into_grad: bool):
-    node_to_grad: dict[Value, object] = {}
-    topo = _topological_sort(outputs)
-
-    for output, seed in zip(outputs, grad_outputs):
-        node_to_grad[output] = _accumulate_grad(node_to_grad.get(output), seed)
-
-    for node in reversed(topo):
-        upstream_grad = node_to_grad.get(node)
-        if upstream_grad is None or not node.requires_grad:
-            continue
-
-        if node.creator is None:
-            if accumulate_into_grad:
-                node.grad = _accumulate_grad(node.grad, upstream_grad)
-            continue
-
-        grads = node.creator.backward(upstream_grad, create_graph=create_graph)
-        if not isinstance(grads, tuple):
-            grads = (grads,)
-
-        for parent, grad in zip(node.creator.inputs, grads):
-            if grad is None or not parent.requires_grad:
-                continue
-            node_to_grad[parent] = _accumulate_grad(node_to_grad.get(parent), grad)
-
-    return node_to_grad
-
-
-class Function:
-    def __init__(self):
-        self.saved_tensors: List["Value"] = []
-        self.inputs: tuple["Value", ...] = ()
-        self.needs_input_grad: tuple[bool, ...] = ()
-
-    def save_for_backward(self, *values: "Value") -> None:
-        self.saved_tensors = list(values)
-
-    def forward(self, *inputs):
-        raise NotImplementedError
-
-    def backward(self, grad_output, create_graph: bool = False):
-        raise NotImplementedError
-
-    @staticmethod
-    def apply(func_cls, *inputs):
-        func = func_cls()
-        normalized_inputs = tuple(
-            value if isinstance(value, Value) else Value(value, requires_grad=False) for value in inputs
-        )
-        func.inputs = normalized_inputs
-        func.needs_input_grad = tuple(value.requires_grad for value in normalized_inputs)
-        output = func.forward(*normalized_inputs)
-        if not isinstance(output, Value):
-            output = Value(output, requires_grad=any(func.needs_input_grad))
-        output.requires_grad = output.requires_grad and any(func.needs_input_grad)
-        output.creator = func if output.requires_grad else None
-        return output
+def grad_add(a, b):
+    if isinstance(a, Value) or isinstance(b, Value):
+        return add(as_value(a), as_value(b))
+    return a + b
 
 
 class Value:
-    def __init__(self, data, requires_grad: bool = True):
-        self.data = _ensure_array(data)
-        self.grad = np.zeros_like(self.data)
-        self.creator: Function | None = None
+    def __init__(self, data, requires_grad=True):
+        self.data = np.asarray(data, dtype=float)
+        self.grad = None
+        self.creator = None
         self.requires_grad = requires_grad
 
-    def backward(self, grad_output=None, create_graph: bool = False):
-        if grad_output is None:
-            grads = (np.ones_like(self.data),)
-        else:
-            grads = _normalize_grad_outputs((self,), grad_output)
-        _run_backward((self,), grads, create_graph=create_graph, accumulate_into_grad=True)
+    def backward(self, grad=None, create_graph=False):
+        if grad is None:
+            grad = np.ones_like(self.data)
+
+        node_to_grad = {self: grad}
+        topo = topo_sort(self)
+
+        for node in reversed(topo):
+            if node not in node_to_grad:
+                continue
+
+            g = node_to_grad[node]
+
+            if node.creator is None:
+                if node.requires_grad:
+                    if node.grad is None:
+                        node.grad = g
+                    else:
+                        node.grad = grad_add(node.grad, g)
+                continue
+
+            grads = node.creator.backward(g, create_graph=create_graph)
+            for parent, parent_grad in zip(node.creator.inputs, grads):
+                if not parent.requires_grad:
+                    continue
+                if parent in node_to_grad:
+                    node_to_grad[parent] = grad_add(node_to_grad[parent], parent_grad)
+                else:
+                    node_to_grad[parent] = parent_grad
 
     def __add__(self, other):
         return add(self, other)
@@ -192,124 +66,176 @@ class Value:
     def __matmul__(self, other):
         return matmul(self, other)
 
-    def __repr__(self) -> str:
-        return f"Value(data={_format_repr(self.data)}, grad={_format_repr(self.grad)})"
+    @property
+    def T(self):
+        return transpose(self)
+
+    def sum(self):
+        return sum_op(self)
+
+    def __repr__(self):
+        return f"Value(data={self.data}, grad={self.grad})"
+
+
+def topo_sort(output):
+    topo = []
+    visited = set()
+
+    def build(node):
+        if node in visited:
+            return
+        visited.add(node)
+        if node.creator is not None:
+            for parent in node.creator.inputs:
+                build(parent)
+        topo.append(node)
+
+    build(output)
+    return topo
+
+
+class Function:
+    def __init__(self):
+        self.inputs = ()
+        self.saved_tensors = ()
+
+    def save_for_backward(self, *xs):
+        self.saved_tensors = xs
+
+    @classmethod
+    def apply(cls, *inputs):
+        inputs = tuple(as_value(x, requires_grad=False) for x in inputs)
+        func = cls()
+        func.inputs = inputs
+        out = func.forward(*inputs)
+        out.creator = func
+        out.requires_grad = any(x.requires_grad for x in inputs)
+        if not out.requires_grad:
+            out.creator = None
+        return out
 
 
 class Add(Function):
-    def forward(self, a: Value, b: Value):
-        self.save_for_backward(a, b)
-        return Value(np.add(a.data, b.data))
+    def forward(self, a, b):
+        return Value(a.data + b.data)
 
-    def backward(self, grad_output, create_graph: bool = False):
+    def backward(self, grad_output, create_graph=False):
         if create_graph:
-            grad_value = _ensure_value(grad_output, requires_grad=False)
-            return grad_value, grad_value
-        return _data_of(grad_output), _data_of(grad_output)
+            g = as_value(grad_output, requires_grad=False)
+            return g, g
+        return grad_output, grad_output
 
 
 class Mul(Function):
-    def forward(self, a: Value, b: Value):
+    def forward(self, a, b):
         self.save_for_backward(a, b)
-        return Value(np.multiply(a.data, b.data))
+        return Value(a.data * b.data)
 
-    def backward(self, grad_output, create_graph: bool = False):
+    def backward(self, grad_output, create_graph=False):
         a, b = self.saved_tensors
         if create_graph:
-            grad_value = _ensure_value(grad_output, requires_grad=False)
-            return mul(grad_value, b), mul(grad_value, a)
-        grad_data = _data_of(grad_output)
-        return np.multiply(b.data, grad_data), np.multiply(a.data, grad_data)
-
-
-class Dot(Function):
-    def forward(self, a: Value, b: Value):
-        self.save_for_backward(a, b)
-        return Value(np.dot(a.data, b.data))
-
-    def backward(self, grad_output, create_graph: bool = False):
-        a, b = self.saved_tensors
-        if create_graph:
-            grad_value = _ensure_value(grad_output, requires_grad=False)
-            return mul(grad_value, b), mul(grad_value, a)
-        grad_data = _data_of(grad_output)
-        return np.multiply(grad_data, b.data), np.multiply(grad_data, a.data)
+            g = as_value(grad_output, requires_grad=False)
+            return g * b, g * a
+        return grad_output * b.data, grad_output * a.data
 
 
 class Transpose(Function):
-    def forward(self, a: Value):
-        self.save_for_backward(a)
-        return Value(_transpose_data(a.data))
+    def forward(self, a):
+        return Value(a.data.T)
 
-    def backward(self, grad_output, create_graph: bool = False):
+    def backward(self, grad_output, create_graph=False):
         if create_graph:
-            return transpose(_ensure_value(grad_output, requires_grad=False))
-        return _transpose_data(_data_of(grad_output))
+            g = as_value(grad_output, requires_grad=False)
+            return (transpose(g),)
+        return (grad_output.T,)
 
 
 class MatMul(Function):
-    def forward(self, a: Value, b: Value):
+    def forward(self, a, b):
         self.save_for_backward(a, b)
-        return Value(np.matmul(a.data, b.data))
+        return Value(a.data @ b.data)
 
-    def backward(self, grad_output, create_graph: bool = False):
+    def backward(self, grad_output, create_graph=False):
         a, b = self.saved_tensors
         if create_graph:
-            grad_value = _ensure_value(grad_output, requires_grad=False)
-            return matmul(grad_value, transpose(b)), matmul(transpose(a), grad_value)
-        grad_data = _data_of(grad_output)
-        return np.matmul(grad_data, b.data.T), np.matmul(a.data.T, grad_data)
+            g = as_value(grad_output, requires_grad=False)
+            return g @ b.T, a.T @ g
+        return grad_output @ b.data.T, a.data.T @ grad_output
 
 
-def grad(outputs, inputs, grad_outputs=None, create_graph: bool = False, allow_unused: bool = False):
-    normalized_outputs = _as_value_sequence(outputs, "outputs")
-    normalized_inputs = _as_value_sequence(inputs, "inputs")
-    normalized_grad_outputs = _normalize_grad_outputs(normalized_outputs, grad_outputs)
-    node_to_grad = _run_backward(
-        normalized_outputs,
-        normalized_grad_outputs,
-        create_graph=create_graph,
-        accumulate_into_grad=False,
-    )
+class Sum(Function):
+    def forward(self, a):
+        self.save_for_backward(a)
+        return Value(np.array(a.data.sum()))
 
-    grads = []
-    for input_value in normalized_inputs:
-        if input_value not in node_to_grad:
-            if allow_unused:
-                grads.append(None)
-                continue
-            raise ValueError("One of the requested inputs was not used to compute the outputs")
-        grads.append(node_to_grad[input_value])
+    def backward(self, grad_output, create_graph=False):
+        (a,) = self.saved_tensors
+        if create_graph:
+            g = as_value(grad_output, requires_grad=False)
+            ones = Value(np.ones_like(a.data), requires_grad=False)
+            return (g * ones,)
+        return (grad_output * np.ones_like(a.data),)
 
+
+def add(a, b):
+    return Add.apply(a, b)
+
+
+def mul(a, b):
+    return Mul.apply(a, b)
+
+
+def transpose(a):
+    return Transpose.apply(a)
+
+
+def matmul(a, b):
+    return MatMul.apply(a, b)
+
+
+def sum_op(a):
+    return Sum.apply(a)
+
+
+def grad(output, inputs, grad_output=None, create_graph=False):
     if isinstance(inputs, Value):
-        return grads[0]
-    return tuple(grads)
+        inputs = (inputs,)
+
+    if grad_output is None:
+        grad_output = np.ones_like(output.data)
+
+    node_to_grad = {output: grad_output}
+    topo = topo_sort(output)
+
+    for node in reversed(topo):
+        if node not in node_to_grad:
+            continue
+
+        g = node_to_grad[node]
+
+        if node.creator is None:
+            continue
+
+        grads = node.creator.backward(g, create_graph=create_graph)
+        for parent, parent_grad in zip(node.creator.inputs, grads):
+            if not parent.requires_grad:
+                continue
+            if parent in node_to_grad:
+                node_to_grad[parent] = grad_add(node_to_grad[parent], parent_grad)
+            else:
+                node_to_grad[parent] = parent_grad
+
+    result = tuple(node_to_grad[x] for x in inputs)
+    if len(result) == 1:
+        return result[0]
+    return result
 
 
-def vjp(func, *primals, v=None, create_graph: bool = False):
-    outputs = func(*primals)
-    primals_as_values = tuple(_ensure_value(primal, requires_grad=False) for primal in primals)
-    grads = grad(outputs, primals_as_values, grad_outputs=v, create_graph=create_graph, allow_unused=False)
-    if isinstance(grads, Value) or grads is None:
+def vjp(func, *primals, v=None, create_graph=False):
+    output = func(*primals)
+    if v is None:
+        v = np.ones_like(output.data)
+    grads = grad(output, primals, grad_output=v, create_graph=create_graph)
+    if isinstance(grads, Value):
         grads = (grads,)
-    return outputs, grads
-
-
-def add(a, b) -> Value:
-    return Add.apply(Add, a, b)
-
-
-def mul(a, b) -> Value:
-    return Mul.apply(Mul, a, b)
-
-
-def dot(a, b) -> Value:
-    return Dot.apply(Dot, a, b)
-
-
-def transpose(a) -> Value:
-    return Transpose.apply(Transpose, a)
-
-
-def matmul(a, b) -> Value:
-    return MatMul.apply(MatMul, a, b)
+    return output, grads

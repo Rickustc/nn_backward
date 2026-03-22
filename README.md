@@ -29,6 +29,12 @@ out.backward()
 print(a.grad)  # [3. 4.]
 ```
 
+what value do:
+  1. 前向时创建计算图
+  2. 每个节点记住它从哪来
+  3. 反向时从输出往回传梯度
+  4. 梯度在共享路径上累加
+
 ### Function-based (Modular)
 ```python
 from function import Value, dot, grad, vjp
